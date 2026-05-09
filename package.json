@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:supabase": "tsx --env-file=.env.local scripts/test-supabase.ts",
-    "test:create-order": "tsx --env-file=.env.local scripts/test-create-order.ts"
+    "test:create-order": "tsx --env-file=.env.local scripts/test-create-order.ts",
+    "test:whatsapp": "tsx --env-file=.env.local scripts/test-send-whatsapp.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
