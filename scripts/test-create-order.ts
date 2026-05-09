@@ -5,13 +5,13 @@ async function main() {
     business_slug: 'cakewalk',
     external_order_id: `TEST-${Date.now()}`,
     customer_name: 'Ali Khan',
-    customer_phone: '+923001234567',
+    customer_phone: '+923335036779',
     items: [
       {
         name: 'Chocolate Cake',
         quantity: 1,
         price: 2500,
-        image_url: 'https://example.com/images/chocolate-cake.jpg',
+        image_url: 'https://cakewalk.pk/_next/image?url=https%3A%2F%2Fassets.indolj.io%2Fupload%2F1720091382-Chocolate%20Gannache.webp%3Fq%3D10&w=640&q=75',
       },
       {
         name: 'Vanilla Cupcakes',

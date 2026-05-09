@@ -1,4 +1,17 @@
 import { createServiceRoleClient } from '@/lib/supabase/service-role'
+import {
+  sendOrderConfirmationTemplate,
+  formatItemsForMessage,
+  formatCurrency,
+  formatPaymentMethod,
+} from '@/lib/whatsapp/send-template'
+
+const DEFAULT_HEADER_IMAGE_URL =
+  'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=800'
+
+// ============================================================
+// Types
+// ============================================================
 
 type OrderItem = {
   name: string
@@ -22,6 +35,10 @@ type CreateOrderBody = {
 type ValidationResult =
   | { valid: true; data: CreateOrderBody }
   | { valid: false; error: string }
+
+// ============================================================
+// Helpers
+// ============================================================
 
 function validate(body: unknown): ValidationResult {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -85,6 +102,16 @@ function validate(body: unknown): ValidationResult {
   return { valid: true, data: b as unknown as CreateOrderBody }
 }
 
+// Returns the first word of a full name for a friendlier greeting.
+// "Ali Khan" → "Ali"
+function extractFirstName(fullName: string): string {
+  return fullName.trim().split(/\s+/)[0]
+}
+
+// ============================================================
+// Route handler
+// ============================================================
+
 export async function POST(request: Request) {
   // 1. Parse body
   let body: unknown
@@ -104,10 +131,11 @@ export async function POST(request: Request) {
   const supabase = createServiceRoleClient()
 
   try {
-    // 3. Look up business by slug
+    // 3. Look up business by slug — fetch WhatsApp config in same query
+    console.log(`[POST /api/orders] Looking up business: ${data.business_slug}`)
     const { data: business, error: businessError } = await supabase
       .from('businesses')
-      .select('id')
+      .select('id, whatsapp_phone_number_id, whatsapp_template_name')
       .eq('slug', data.business_slug)
       .single()
 
@@ -119,6 +147,7 @@ export async function POST(request: Request) {
     }
 
     // 4. Insert order
+    console.log(`[POST /api/orders] Inserting order: ${data.external_order_id}`)
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .insert({
@@ -141,23 +170,96 @@ export async function POST(request: Request) {
       return Response.json({ error: 'Failed to create order' }, { status: 500 })
     }
 
+    console.log(`[POST /api/orders] Order created: ${order.id}`)
+
     // 5. Log order_received event
     const { error: eventError } = await supabase.from('order_events').insert({
       order_id: order.id,
       business_id: business.id,
       event_type: 'order_received',
-      event_data: {
-        source: 'api',
-        external_order_id: data.external_order_id,
-      },
+      event_data: { source: 'api', external_order_id: data.external_order_id },
     })
 
     if (eventError) {
-      // Non-fatal: order already created, just surface the failure in logs
-      console.error('[POST /api/orders] Insert order_event failed:', eventError)
+      console.error('[POST /api/orders] Insert order_received event failed:', eventError)
     }
 
-    // 6. Return success
+    // 6. Send WhatsApp confirmation
+    // Wrapped in its own try/catch — a failure here must never lose the order.
+    try {
+      if (!business.whatsapp_phone_number_id || !business.whatsapp_template_name) {
+        console.warn(
+          `[POST /api/orders] Business ${data.business_slug} has no WhatsApp config — skipping send`
+        )
+      } else {
+        console.log(`[POST /api/orders] Sending WhatsApp message to ${data.customer_phone}`)
+
+        const headerImageUrl = data.items[0]?.image_url || DEFAULT_HEADER_IMAGE_URL
+
+        const sendResult = await sendOrderConfirmationTemplate({
+          business: {
+            id: business.id,
+            whatsapp_phone_number_id: business.whatsapp_phone_number_id,
+            whatsapp_template_name: business.whatsapp_template_name,
+            whatsapp_template_language: 'en',
+          },
+          customer_phone: data.customer_phone,
+          template_variables: {
+            customer_name: extractFirstName(data.customer_name),
+            order_id: data.external_order_id,
+            items_text: formatItemsForMessage(data.items),
+            total_with_currency: formatCurrency(data.total_amount, data.currency),
+            payment_method: formatPaymentMethod(data.payment_method as 'cod' | 'paid'),
+            delivery_address: data.delivery_address ?? 'Pickup',
+          },
+          header_image_url: headerImageUrl,
+        })
+
+        if (sendResult.success) {
+          console.log(
+            `[POST /api/orders] WhatsApp sent — message_id: ${sendResult.whatsapp_message_id}`
+          )
+
+          // Update order with the WhatsApp message ID (used later for button webhooks)
+          const { error: updateError } = await supabase
+            .from('orders')
+            .update({ whatsapp_message_id: sendResult.whatsapp_message_id })
+            .eq('id', order.id)
+
+          if (updateError) {
+            console.error('[POST /api/orders] Failed to save whatsapp_message_id:', updateError)
+          }
+
+          await supabase.from('order_events').insert({
+            order_id: order.id,
+            business_id: business.id,
+            event_type: 'whatsapp_sent',
+            event_data: { whatsapp_message_id: sendResult.whatsapp_message_id },
+          })
+        } else {
+          console.error('[POST /api/orders] WhatsApp send failed:', {
+            order_id: order.id,
+            error: sendResult.error,
+            meta_error_code: sendResult.meta_error_code,
+          })
+
+          await supabase.from('order_events').insert({
+            order_id: order.id,
+            business_id: business.id,
+            event_type: 'whatsapp_send_failed',
+            event_data: {
+              error: sendResult.error,
+              meta_error_code: sendResult.meta_error_code ?? null,
+            },
+          })
+        }
+      }
+    } catch (whatsappErr) {
+      // Non-fatal: order is saved regardless of WhatsApp outcome
+      console.error('[POST /api/orders] Unexpected error during WhatsApp send:', whatsappErr)
+    }
+
+    // 7. Return success — always, as long as the order was saved
     return Response.json({
       success: true,
       order_id: order.id,
