@@ -8,7 +8,7 @@ import {
 // ─── PUT YOUR NUMBER HERE ────────────────────────────────────────────────────
 // E.164 format: +<country code><number>, no spaces
 // Example: '+923001234567'
-const TEST_PHONE_NUMBER = '+923335036779'
+const TEST_PHONE_NUMBER: string = '+923335036779'
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TEST_ITEMS = [
