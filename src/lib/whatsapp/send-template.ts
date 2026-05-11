@@ -260,3 +260,92 @@ export async function sendSimpleTextMessage(params: {
 
   return { success: true, whatsapp_message_id: messageId }
 }
+
+// ============================================================
+// Cancellation template (2 body variables: customer_name, order_id)
+// No header image — assumes order_cancelled_v1 is a text-only template.
+// ============================================================
+
+export async function sendCancellationTemplate(params: {
+  business: {
+    whatsapp_phone_number_id: string
+    whatsapp_cancellation_template_name?: string  // defaults to 'order_cancelled_v1'
+    whatsapp_template_language?: string
+  }
+  customer_phone: string
+  template_variables: {
+    customer_name: string  // {{1}}
+    order_id: string       // {{2}}
+  }
+}): Promise<SendResult> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN
+  if (!accessToken) {
+    throw new Error('WHATSAPP_ACCESS_TOKEN environment variable is not set')
+  }
+
+  const { business, customer_phone, template_variables } = params
+  const to = customer_phone.startsWith('+') ? customer_phone.slice(1) : customer_phone
+  const url = `${GRAPH_API_BASE}/${business.whatsapp_phone_number_id}/messages`
+  const templateName = business.whatsapp_cancellation_template_name ?? 'order_cancelled_v1'
+
+  const requestBody = {
+    messaging_product: 'whatsapp',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: business.whatsapp_template_language ?? 'en' },
+      components: [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: sanitizeForTemplate(template_variables.customer_name) },
+            { type: 'text', text: sanitizeForTemplate(template_variables.order_id) },
+          ],
+        },
+      ],
+    },
+  }
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(requestBody),
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { success: false, error: `Network error: ${message}` }
+  }
+
+  const responseData = (await response.json()) as WhatsAppApiSuccess | WhatsAppApiError
+
+  if (!response.ok) {
+    const apiErr = responseData as WhatsAppApiError
+    const code = apiErr?.error?.code
+    const message = apiErr?.error?.message ?? 'Unknown error from WhatsApp API'
+    console.error('[WhatsApp] sendCancellationTemplate error:', {
+      status: response.status,
+      code,
+      message,
+      phone_number_id: business.whatsapp_phone_number_id,
+    })
+    return { success: false, error: message, meta_error_code: code }
+  }
+
+  const successData = responseData as WhatsAppApiSuccess
+  const messageId = successData?.messages?.[0]?.id
+
+  if (!messageId) {
+    return {
+      success: false,
+      error: 'WhatsApp API returned success but response contained no message ID',
+    }
+  }
+
+  return { success: true, whatsapp_message_id: messageId }
+}

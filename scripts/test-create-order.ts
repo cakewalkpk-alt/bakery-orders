@@ -1,4 +1,4 @@
-const BASE_URL = 'https://bakery-orders-ebon.vercel.app'
+const BASE_URL = 'http://localhost:3000'
 
 async function main() {
   const payload = {
