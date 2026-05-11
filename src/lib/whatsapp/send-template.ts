@@ -189,3 +189,74 @@ export async function sendOrderConfirmationTemplate(
 
   return { success: true, whatsapp_message_id: messageId }
 }
+
+// ============================================================
+// Plain-text message (used for button-tap acknowledgements)
+// Only valid within the 24-hour customer service window, which is
+// open immediately after the customer taps a button.
+// ============================================================
+
+export async function sendSimpleTextMessage(params: {
+  business: { whatsapp_phone_number_id: string }
+  to: string  // E.164 with leading +
+  text: string
+}): Promise<SendResult> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN
+  if (!accessToken) {
+    throw new Error('WHATSAPP_ACCESS_TOKEN environment variable is not set')
+  }
+
+  const { business, to, text } = params
+  const toNumber = to.startsWith('+') ? to.slice(1) : to
+  const url = `${GRAPH_API_BASE}/${business.whatsapp_phone_number_id}/messages`
+
+  const requestBody = {
+    messaging_product: 'whatsapp',
+    to: toNumber,
+    type: 'text',
+    text: { body: text },
+  }
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(requestBody),
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { success: false, error: `Network error: ${message}` }
+  }
+
+  const responseData = (await response.json()) as WhatsAppApiSuccess | WhatsAppApiError
+
+  if (!response.ok) {
+    const apiErr = responseData as WhatsAppApiError
+    const code = apiErr?.error?.code
+    const message = apiErr?.error?.message ?? 'Unknown error from WhatsApp API'
+    console.error('[WhatsApp] sendSimpleTextMessage error:', {
+      status: response.status,
+      code,
+      message,
+      phone_number_id: business.whatsapp_phone_number_id,
+    })
+    return { success: false, error: message, meta_error_code: code }
+  }
+
+  const successData = responseData as WhatsAppApiSuccess
+  const messageId = successData?.messages?.[0]?.id
+
+  if (!messageId) {
+    console.error('[WhatsApp] sendSimpleTextMessage: no message ID in response:', successData)
+    return {
+      success: false,
+      error: 'WhatsApp API returned success but response contained no message ID',
+    }
+  }
+
+  return { success: true, whatsapp_message_id: messageId }
+}
