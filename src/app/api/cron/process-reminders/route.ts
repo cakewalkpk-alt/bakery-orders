@@ -6,6 +6,7 @@ import {
   formatCurrency,
   formatPaymentMethod,
 } from '@/lib/whatsapp/send-template'
+import { sendTeamReminderEmail } from '@/lib/email/send-team-notification'
 
 const DEFAULT_HEADER_IMAGE_URL =
   'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=800'
@@ -22,12 +23,14 @@ type OrderItem = {
 }
 
 type BusinessConfig = {
+  name: string
   whatsapp_phone_number_id: string
   whatsapp_template_name: string | null
   reminder_1_after_minutes: number
   reminder_2_after_minutes: number
   business_hours_end: number
   timezone: string
+  team_notify_emails: string[]
 }
 
 type PendingOrder = {
@@ -140,9 +143,9 @@ export async function GET(request: Request) {
       items, total_amount, currency, payment_method, delivery_address,
       created_at, reminder_1_sent_at, reminder_2_sent_at, whatsapp_message_id,
       businesses!inner (
-        whatsapp_phone_number_id, whatsapp_template_name,
+        name, whatsapp_phone_number_id, whatsapp_template_name,
         reminder_1_after_minutes, reminder_2_after_minutes,
-        business_hours_end, timezone
+        business_hours_end, timezone, team_notify_emails
       )
     `)
     .eq('status', 'pending_confirmation')
@@ -273,6 +276,25 @@ async function processReminder(
     })
 
     console.log(`[cron] ${label} sent — order ${order.id}, message_id: ${sendResult.whatsapp_message_id}`)
+
+    // Send team email notification (non-fatal)
+    if (biz.team_notify_emails.length > 0) {
+      try {
+        const emailResult = await sendTeamReminderEmail({
+          to: biz.team_notify_emails,
+          business_name: biz.name,
+          order,
+          reminder_number: reminderNumber,
+        })
+        if (emailResult.success) {
+          console.log(`[cron] Team email sent for order ${order.id}, email_id: ${emailResult.email_id}`)
+        } else {
+          console.error(`[cron] Team email failed for order ${order.id}:`, emailResult.error)
+        }
+      } catch (err) {
+        console.error(`[cron] Team email unexpected error for order ${order.id}:`, err)
+      }
+    }
   } else {
     console.error(`[cron] ${label} failed — order ${order.id}:`, {
       error: sendResult.error,
