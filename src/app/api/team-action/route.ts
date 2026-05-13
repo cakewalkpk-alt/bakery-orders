@@ -1,6 +1,7 @@
 import { createServiceRoleClient } from '@/lib/supabase/service-role'
 import { verifyTeamActionToken } from '@/lib/security/team-action-token'
 import { sendSimpleTextMessage } from '@/lib/whatsapp/send-template'
+import { updateOrderInSheet } from '@/lib/google-sheets/log-order'
 
 // Same acknowledgement messages used in the button webhook
 const MSG_CONFIRMED =
@@ -150,6 +151,21 @@ export async function GET(request: Request) {
 
       await notifyCustomer(supabase, order, MSG_CONFIRMED)
 
+      void (async () => {
+        const { data: biz } = await supabase
+          .from('businesses')
+          .select('google_sheet_id')
+          .eq('id', order.business_id)
+          .single()
+        if (biz?.google_sheet_id) {
+          await updateOrderInSheet({
+            spreadsheet_id: biz.google_sheet_id,
+            external_order_id: order.external_order_id,
+            updates: { status: 'confirmed', confirmed_at: now.toISOString() },
+          })
+        }
+      })().catch((err) => console.error('[sheets-update] failed:', err))
+
       return htmlPage(
         '✅',
         'Order Confirmed',
@@ -175,6 +191,21 @@ export async function GET(request: Request) {
       })
 
       await notifyCustomer(supabase, order, MSG_CANCELLED)
+
+      void (async () => {
+        const { data: biz } = await supabase
+          .from('businesses')
+          .select('google_sheet_id')
+          .eq('id', order.business_id)
+          .single()
+        if (biz?.google_sheet_id) {
+          await updateOrderInSheet({
+            spreadsheet_id: biz.google_sheet_id,
+            external_order_id: order.external_order_id,
+            updates: { status: 'cancelled_by_team', cancelled_at: now.toISOString() },
+          })
+        }
+      })().catch((err) => console.error('[sheets-update] failed:', err))
 
       return htmlPage(
         '❌',

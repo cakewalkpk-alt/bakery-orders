@@ -7,6 +7,7 @@ import {
   formatPaymentMethod,
 } from '@/lib/whatsapp/send-template'
 import { sendTeamReminderEmail } from '@/lib/email/send-team-notification'
+import { updateOrderInSheet } from '@/lib/google-sheets/log-order'
 
 const DEFAULT_HEADER_IMAGE_URL =
   'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=800'
@@ -31,6 +32,7 @@ type BusinessConfig = {
   business_hours_end: number
   timezone: string
   team_notify_emails: string[]
+  google_sheet_id: string | null
 }
 
 type PendingOrder = {
@@ -145,7 +147,7 @@ export async function GET(request: Request) {
       businesses!inner (
         name, whatsapp_phone_number_id, whatsapp_template_name,
         reminder_1_after_minutes, reminder_2_after_minutes,
-        business_hours_end, timezone, team_notify_emails
+        business_hours_end, timezone, team_notify_emails, google_sheet_id
       )
     `)
     .eq('status', 'pending_confirmation')
@@ -277,6 +279,16 @@ async function processReminder(
 
     console.log(`[cron] ${label} sent — order ${order.id}, message_id: ${sendResult.whatsapp_message_id}`)
 
+    // Fire-and-forget sheets update
+    if (biz.google_sheet_id) {
+      const sheetKey = reminderNumber === 1 ? 'reminder_1_sent_at' : 'reminder_2_sent_at'
+      void updateOrderInSheet({
+        spreadsheet_id: biz.google_sheet_id,
+        external_order_id: order.external_order_id,
+        updates: { [sheetKey]: now.toISOString() },
+      }).catch((err) => console.error('[sheets-update] failed:', err))
+    }
+
     // Send team email notification (non-fatal)
     if (biz.team_notify_emails.length > 0) {
       try {
@@ -346,6 +358,15 @@ async function processAutoCancel(
     event_type: 'auto_cancelled',
     event_data: { reason: 'no_response_after_reminder_2' },
   })
+
+  // Fire-and-forget sheets update
+  if (biz.google_sheet_id) {
+    void updateOrderInSheet({
+      spreadsheet_id: biz.google_sheet_id,
+      external_order_id: order.external_order_id,
+      updates: { status: 'cancelled_no_response', cancelled_at: now.toISOString() },
+    }).catch((err) => console.error('[sheets-update] failed:', err))
+  }
 
   // Send cancellation notification to customer (non-fatal if it fails)
   const sendResult = await sendCancellationTemplate({

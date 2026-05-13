@@ -9,10 +9,13 @@
     "lint": "eslint",
     "test:supabase": "tsx --env-file=.env.local scripts/test-supabase.ts",
     "test:create-order": "tsx --env-file=.env.local scripts/test-create-order.ts",
-    "test:whatsapp": "tsx --env-file=.env.local scripts/test-send-whatsapp.ts"
+    "test:whatsapp": "tsx --env-file=.env.local scripts/test-send-whatsapp.ts",
+    "test:team-email": "tsx --env-file=.env.local scripts/test-team-email.ts",
+    "test:sheets": "tsx --env-file=.env.local scripts/test-sheets-append.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
+    "googleapis": "^171.4.0",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",

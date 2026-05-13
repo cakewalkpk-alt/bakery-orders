@@ -1,5 +1,6 @@
 import { createServiceRoleClient } from '@/lib/supabase/service-role'
 import { sendSimpleTextMessage } from '@/lib/whatsapp/send-template'
+import { updateOrderInSheet } from '@/lib/google-sheets/log-order'
 
 // ============================================================
 // Response messages sent back to customer after button tap
@@ -178,7 +179,7 @@ async function handleButtonTap(
   // ── Look up the order and its business in one query ──────────────────────
   const { data: orderRow, error: orderLookupError } = await supabase
     .from('orders')
-    .select('id, business_id, status, customer_phone')
+    .select('id, business_id, status, customer_phone, external_order_id')
     .eq('whatsapp_message_id', contextId)
     .single()
 
@@ -255,7 +256,7 @@ async function handleButtonTap(
   // ── Fetch business phone_number_id for the reply ──────────────────────────
   const { data: business, error: businessError } = await supabase
     .from('businesses')
-    .select('whatsapp_phone_number_id')
+    .select('whatsapp_phone_number_id, google_sheet_id')
     .eq('id', orderRow.business_id)
     .single()
 
@@ -275,5 +276,20 @@ async function handleButtonTap(
     console.log('[WhatsApp webhook] Acknowledgement sent:', sendResult.whatsapp_message_id)
   } else {
     console.error('[WhatsApp webhook] Failed to send acknowledgement:', sendResult.error)
+  }
+
+  // Fire-and-forget sheets update
+  if (business.google_sheet_id) {
+    const sheetUpdates: { status: string; confirmed_at?: string; cancelled_at?: string } = {
+      status: newStatus,
+    }
+    if (timestampField.confirmed_at) sheetUpdates.confirmed_at = timestampField.confirmed_at
+    if (timestampField.cancelled_at) sheetUpdates.cancelled_at = timestampField.cancelled_at
+
+    void updateOrderInSheet({
+      spreadsheet_id: business.google_sheet_id,
+      external_order_id: orderRow.external_order_id,
+      updates: sheetUpdates,
+    }).catch((err) => console.error('[sheets-update] failed:', err))
   }
 }

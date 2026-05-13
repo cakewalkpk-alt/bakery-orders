@@ -5,6 +5,7 @@ import {
   formatCurrency,
   formatPaymentMethod,
 } from '@/lib/whatsapp/send-template'
+import { appendOrderToSheet } from '@/lib/google-sheets/log-order'
 
 const DEFAULT_HEADER_IMAGE_URL =
   'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=800'
@@ -135,7 +136,7 @@ export async function POST(request: Request) {
     console.log(`[POST /api/orders] Looking up business: ${data.business_slug}`)
     const { data: business, error: businessError } = await supabase
       .from('businesses')
-      .select('id, whatsapp_phone_number_id, whatsapp_template_name')
+      .select('id, whatsapp_phone_number_id, whatsapp_template_name, google_sheet_id')
       .eq('slug', data.business_slug)
       .single()
 
@@ -259,7 +260,26 @@ export async function POST(request: Request) {
       console.error('[POST /api/orders] Unexpected error during WhatsApp send:', whatsappErr)
     }
 
-    // 7. Return success — always, as long as the order was saved
+    // 7. Log to Google Sheet (fire-and-forget — never blocks the response)
+    if (business.google_sheet_id) {
+      void appendOrderToSheet({
+        spreadsheet_id: business.google_sheet_id,
+        order: {
+          external_order_id: data.external_order_id,
+          customer_name: data.customer_name,
+          customer_phone: data.customer_phone,
+          items: data.items,
+          total_amount: data.total_amount,
+          currency: data.currency,
+          payment_method: data.payment_method,
+          delivery_address: data.delivery_address ?? null,
+          status: 'pending_confirmation',
+          created_at: new Date().toISOString(),
+        },
+      }).catch((err) => console.error('[sheets-append] failed:', err))
+    }
+
+    // 8. Return success — always, as long as the order was saved
     return Response.json({
       success: true,
       order_id: order.id,
