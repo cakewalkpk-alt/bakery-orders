@@ -260,9 +260,9 @@ export async function POST(request: Request) {
       console.error('[POST /api/orders] Unexpected error during WhatsApp send:', whatsappErr)
     }
 
-    // 7. Log to Google Sheet (fire-and-forget — never blocks the response)
+    // 7. Log to Google Sheet — awaited so every order is guaranteed to land in the sheet
     if (business.google_sheet_id) {
-      void appendOrderToSheet({
+      const sheetResult = await appendOrderToSheet({
         spreadsheet_id: business.google_sheet_id,
         order: {
           external_order_id: data.external_order_id,
@@ -276,7 +276,10 @@ export async function POST(request: Request) {
           status: 'pending_confirmation',
           created_at: new Date().toISOString(),
         },
-      }).catch((err) => console.error('[sheets-append] failed:', err))
+      })
+      if (!sheetResult.success) {
+        console.error('[sheets-append] failed:', sheetResult.error)
+      }
     }
 
     // 8. Return success — always, as long as the order was saved
