@@ -1,6 +1,7 @@
 import { createServiceRoleClient } from '@/lib/supabase/service-role'
 import { sendSimpleTextMessage } from '@/lib/whatsapp/send-template'
 import { updateOrderInSheet } from '@/lib/google-sheets/log-order'
+import { notifyMedusa } from '@/lib/medusa/notify'
 
 // ============================================================
 // Response messages sent back to customer after button tap
@@ -24,9 +25,18 @@ type WhatsAppButtonMessage = {
     from: string
     id: string  // ID of the message we originally sent — matches orders.whatsapp_message_id
   }
+  // Template quick-reply buttons (type === 'button')
   button?: {
     payload: string
     text: string
+  }
+  // Interactive button replies (type === 'interactive', interactive.type === 'button_reply')
+  interactive?: {
+    type: string
+    button_reply?: {
+      id: string
+      title: string
+    }
   }
 }
 
@@ -135,7 +145,17 @@ export async function POST(request: Request) {
 
         // ── Inbound messages ─────────────────────────────────────────────────
         for (const message of value.messages ?? []) {
-          if (message.type === 'button') {
+          console.log('[WhatsApp webhook] message type:', message.type)
+          if (message.interactive?.type) {
+            console.log('[WhatsApp webhook] interactive type:', message.interactive.type)
+            console.log('[WhatsApp webhook] button reply:', JSON.stringify(message.interactive.button_reply))
+          }
+
+          const isButtonTap =
+            message.type === 'button' ||
+            (message.type === 'interactive' && message.interactive?.type === 'button_reply')
+
+          if (isButtonTap) {
             await handleButtonTap(supabase, message)
           } else {
             console.log('[WhatsApp webhook] Ignoring non-button message', {
@@ -163,11 +183,15 @@ async function handleButtonTap(
   message: WhatsAppButtonMessage
 ): Promise<void> {
   const contextId = message.context?.id
-  const buttonText = message.button?.text ?? ''
+  // Handles both template quick-replies (button.text) and interactive replies (interactive.button_reply.title)
+  const buttonText = message.button?.text ?? message.interactive?.button_reply?.title ?? ''
 
   console.log('[WhatsApp webhook] Button tap received:', {
     from: message.from,
+    message_type: message.type,
     button_text: buttonText,
+    button_payload: message.button?.payload,
+    button_reply_id: message.interactive?.button_reply?.id,
     context_message_id: contextId,
   })
 
@@ -179,7 +203,7 @@ async function handleButtonTap(
   // ── Look up the order and its business in one query ──────────────────────
   const { data: orderRow, error: orderLookupError } = await supabase
     .from('orders')
-    .select('id, business_id, status, customer_phone, external_order_id')
+    .select('id, business_id, status, customer_phone, external_order_id, medusa_order_id')
     .eq('whatsapp_message_id', contextId)
     .single()
 
@@ -277,6 +301,13 @@ async function handleButtonTap(
   } else {
     console.error('[WhatsApp webhook] Failed to send acknowledgement:', sendResult.error)
   }
+
+  // ── Notify Medusa Operations Dashboard ───────────────────────────────────
+  void notifyMedusa(
+    orderRow.medusa_order_id,
+    newStatus === 'confirmed' ? 'CONFIRMED' : 'CANCELLED',
+    newStatus === 'confirmed' ? 'Confirmed via WhatsApp' : 'Cancelled via WhatsApp',
+  )
 
   // Fire-and-forget sheets update
   if (business.google_sheet_id) {

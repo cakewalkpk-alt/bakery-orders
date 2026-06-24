@@ -11,7 +11,8 @@
     "test:create-order": "tsx --env-file=.env.local scripts/test-create-order.ts",
     "test:whatsapp": "tsx --env-file=.env.local scripts/test-send-whatsapp.ts",
     "test:team-email": "tsx --env-file=.env.local scripts/test-team-email.ts",
-    "test:sheets": "tsx --env-file=.env.local scripts/test-sheets-append.ts"
+    "test:sheets": "tsx --env-file=.env.local scripts/test-sheets-append.ts",
+    "sync-missing": "tsx --env-file=.env.local scripts/sync-missing-orders.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",

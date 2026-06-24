@@ -1,0 +1,265 @@
+-- ============================================================
+-- 0001_initial_schema.sql
+-- Run this in the Supabase SQL Editor (Dashboard → SQL Editor)
+-- ============================================================
+
+-- ============================================================
+-- ENUMS
+-- ============================================================
+
+create type order_status as enum (
+  'pending',    -- just received, not yet confirmed
+  'confirmed',  -- bakery acknowledged
+  'preparing',  -- in production
+  'ready',      -- ready for pickup / out for delivery
+  'delivered',  -- handed off
+  'cancelled'
+);
+
+create type fulfillment_type as enum (
+  'pickup',
+  'delivery'
+);
+
+create type message_direction as enum (
+  'inbound',   -- customer → bakery
+  'outbound'   -- bakery → customer
+);
+
+create type reminder_status as enum (
+  'pending',
+  'sent',
+  'failed',
+  'cancelled'
+);
+
+-- ============================================================
+-- TABLES
+-- ============================================================
+
+-- One row per bakery / SaaS tenant.
+-- Phase 1: only Cakewalk.  Phase 3: one row per customer business.
+create table businesses (
+  id                             uuid        primary key default gen_random_uuid(),
+  name                           text        not null,
+  slug                           text        not null unique,    -- e.g. "cakewalk"
+  whatsapp_phone_number_id       text        not null,
+  whatsapp_access_token          text,                           -- store encrypted in Phase 2
+  whatsapp_business_account_id   text        not null,
+  business_hours_start           int         not null default 9,   -- 0–23
+  business_hours_end             int         not null default 18,  -- 0–23
+  timezone                       text        not null default 'Asia/Karachi',
+  reminder_1_hours               int         not null default 2,   -- hours before fulfillment
+  reminder_2_hours               int         not null default 24,  -- hours before fulfillment
+  created_at                     timestamptz not null default now(),
+
+  constraint chk_business_hours check (
+    business_hours_start >= 0 and business_hours_start <= 23 and
+    business_hours_end   >= 0 and business_hours_end   <= 23 and
+    business_hours_start < business_hours_end
+  ),
+  constraint chk_reminder_hours check (
+    reminder_1_hours > 0 and reminder_2_hours > 0 and
+    reminder_2_hours > reminder_1_hours   -- reminder 2 fires first (further out)
+  )
+);
+
+-- Customers are scoped to a business.
+-- Identified by WhatsApp phone number; name filled in as conversation progresses.
+create table customers (
+  id          uuid        primary key default gen_random_uuid(),
+  business_id uuid        not null references businesses(id) on delete cascade,
+  phone       text        not null,   -- E.164 format e.g. "+923001234567"
+  name        text,
+  created_at  timestamptz not null default now(),
+
+  unique(business_id, phone)
+);
+
+-- One row per order.
+-- order_number is human-readable, unique per business (e.g. "CW-001").
+create table orders (
+  id               uuid             primary key default gen_random_uuid(),
+  business_id      uuid             not null references businesses(id) on delete cascade,
+  customer_id      uuid             not null references customers(id),
+  order_number     text             not null,
+  status           order_status     not null default 'pending',
+  fulfillment_type fulfillment_type not null default 'pickup',
+  fulfillment_at   timestamptz      not null,   -- when to pick up or deliver
+  delivery_address text,                         -- only if fulfillment_type = 'delivery'
+  notes            text,
+  total_amount     numeric(10, 2),
+  created_at       timestamptz      not null default now(),
+  updated_at       timestamptz      not null default now(),
+
+  unique(business_id, order_number),
+  constraint chk_delivery_address check (
+    fulfillment_type = 'pickup' or delivery_address is not null
+  )
+);
+
+-- Line items for an order.
+-- unit_price is nullable for early-stage free-text orders.
+create table order_items (
+  id          uuid         primary key default gen_random_uuid(),
+  business_id uuid         not null references businesses(id) on delete cascade,
+  order_id    uuid         not null references orders(id) on delete cascade,
+  name        text         not null,
+  quantity    int          not null default 1,
+  unit_price  numeric(10, 2),
+  notes       text,
+
+  constraint chk_quantity check (quantity > 0)
+);
+
+-- Full WhatsApp message log — every inbound and outbound message.
+-- whatsapp_message_id is the ID from the Cloud API (for dedup and status callbacks).
+create table messages (
+  id                  uuid               primary key default gen_random_uuid(),
+  business_id         uuid               not null references businesses(id) on delete cascade,
+  customer_id         uuid               not null references customers(id),
+  order_id            uuid               references orders(id),   -- nullable; set once order is identified
+  whatsapp_message_id text               unique,                  -- null for outbound until API confirms
+  direction           message_direction  not null,
+  content             text               not null,
+  sent_at             timestamptz        not null default now()
+);
+
+-- One row per scheduled reminder per order.
+-- reminder_number 1 = closer reminder, 2 = earlier/further-out reminder.
+create table reminders (
+  id              uuid            primary key default gen_random_uuid(),
+  business_id     uuid            not null references businesses(id) on delete cascade,
+  order_id        uuid            not null references orders(id) on delete cascade,
+  reminder_number int             not null,   -- 1 or 2
+  scheduled_at    timestamptz     not null,
+  sent_at         timestamptz,
+  status          reminder_status not null default 'pending',
+
+  unique(order_id, reminder_number),
+  constraint chk_reminder_number check (reminder_number in (1, 2))
+);
+
+-- ============================================================
+-- INDEXES
+-- ============================================================
+
+-- Fast customer lookup by phone per business (used on every incoming message)
+create index idx_customers_business_phone on customers(business_id, phone);
+
+-- Order lookups
+create index idx_orders_business_status   on orders(business_id, status);
+create index idx_orders_customer          on orders(customer_id);
+create index idx_orders_fulfillment_at    on orders(fulfillment_at);
+
+-- Message history per customer
+create index idx_messages_customer        on messages(customer_id, sent_at desc);
+create index idx_messages_business        on messages(business_id, sent_at desc);
+
+-- Reminder processing: find pending reminders ready to fire
+create index idx_reminders_pending on reminders(business_id, scheduled_at)
+  where status = 'pending';
+
+-- ============================================================
+-- updated_at TRIGGER
+-- ============================================================
+
+create or replace function set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create trigger orders_set_updated_at
+  before update on orders
+  for each row execute function set_updated_at();
+
+-- ============================================================
+-- ROW LEVEL SECURITY
+-- ============================================================
+-- All tables have RLS enabled.
+-- The backend (webhook handlers, server actions) uses the service_role key,
+-- which bypasses RLS entirely — no policies needed for it.
+--
+-- The policies below are structured for Phase 3: an authenticated business owner
+-- logs into a dashboard and can only see their own business's data.
+-- Their Supabase Auth JWT will carry: app_metadata.business_id = "<uuid>"
+--
+-- For Phase 1, with no dashboard yet, these policies effectively block all
+-- non-service-role access, which is the safe default.
+-- ============================================================
+
+alter table businesses  enable row level security;
+alter table customers   enable row level security;
+alter table orders      enable row level security;
+alter table order_items enable row level security;
+alter table messages    enable row level security;
+alter table reminders   enable row level security;
+
+-- Helper: extract business_id from the authenticated user's JWT custom claim.
+-- Returns null if not authenticated or claim is absent (blocks access safely).
+create or replace function current_business_id()
+returns uuid language sql stable as $$
+  select nullif(
+    (auth.jwt() -> 'app_metadata' ->> 'business_id'),
+    ''
+  )::uuid;
+$$;
+
+-- businesses: a logged-in user can only read their own business row
+create policy "businesses: own row only"
+  on businesses for select
+  using (id = current_business_id());
+
+-- Per-business isolation for all per-tenant tables
+create policy "customers: own business"
+  on customers for all
+  using (business_id = current_business_id());
+
+create policy "orders: own business"
+  on orders for all
+  using (business_id = current_business_id());
+
+create policy "order_items: own business"
+  on order_items for all
+  using (business_id = current_business_id());
+
+create policy "messages: own business"
+  on messages for all
+  using (business_id = current_business_id());
+
+create policy "reminders: own business"
+  on reminders for all
+  using (business_id = current_business_id());
+
+-- ============================================================
+-- SEED: Cakewalk (Phase 1 business)
+-- ============================================================
+-- Fill in real values from your WhatsApp Business Platform dashboard.
+-- Leave whatsapp_access_token as NULL for now; set it via env var in the app.
+
+insert into businesses (
+  name,
+  slug,
+  whatsapp_phone_number_id,
+  whatsapp_access_token,
+  whatsapp_business_account_id,
+  business_hours_start,
+  business_hours_end,
+  timezone,
+  reminder_1_hours,
+  reminder_2_hours
+) values (
+  'Cakewalk',
+  'cakewalk',
+  'REPLACE_WITH_PHONE_NUMBER_ID',
+  null,
+  'REPLACE_WITH_WABA_ID',
+  9,
+  18,
+  'Asia/Karachi',
+  2,
+  24
+);

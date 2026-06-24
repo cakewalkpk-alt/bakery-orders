@@ -31,6 +31,7 @@ type CreateOrderBody = {
   currency: string
   payment_method: string
   delivery_address?: string
+  medusa_order_id?: string
 }
 
 type ValidationResult =
@@ -118,6 +119,12 @@ export async function POST(request: Request) {
   let body: unknown
   try {
     body = await request.json()
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const b = body as Record<string, unknown>
+      console.log('[orders] incoming payload keys:', Object.keys(b))
+      console.log('[orders] order_id field:', b.order_id)
+      console.log('[orders] medusa_order_id field:', b.medusa_order_id)
+    }
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
@@ -129,6 +136,12 @@ export async function POST(request: Request) {
   }
 
   const data = result.data
+  const rawBody = body as Record<string, unknown>
+  const medusaOrderId =
+    (rawBody.order_id as string | undefined) ??
+    (rawBody.medusa_order_id as string | undefined) ??
+    null
+  console.log('[orders] resolved medusa_order_id:', medusaOrderId)
   const supabase = createServiceRoleClient()
 
   try {
@@ -154,6 +167,7 @@ export async function POST(request: Request) {
       .insert({
         business_id: business.id,
         external_order_id: data.external_order_id,
+        medusa_order_id: medusaOrderId,
         customer_name: data.customer_name,
         customer_phone: data.customer_phone,
         items: data.items,

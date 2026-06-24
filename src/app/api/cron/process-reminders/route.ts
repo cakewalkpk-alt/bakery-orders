@@ -8,6 +8,7 @@ import {
 } from '@/lib/whatsapp/send-template'
 import { sendTeamReminderEmail } from '@/lib/email/send-team-notification'
 import { updateOrderInSheet } from '@/lib/google-sheets/log-order'
+import { notifyMedusa } from '@/lib/medusa/notify'
 
 const DEFAULT_HEADER_IMAGE_URL =
   'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=800'
@@ -38,6 +39,7 @@ type BusinessConfig = {
 type PendingOrder = {
   id: string
   external_order_id: string
+  medusa_order_id: string | null
   business_id: string
   customer_name: string
   customer_phone: string
@@ -141,7 +143,7 @@ export async function GET(request: Request) {
   const { data, error: fetchError } = await supabase
     .from('orders')
     .select(`
-      id, external_order_id, business_id, customer_name, customer_phone,
+      id, external_order_id, medusa_order_id, business_id, customer_name, customer_phone,
       items, total_amount, currency, payment_method, delivery_address,
       created_at, reminder_1_sent_at, reminder_2_sent_at, whatsapp_message_id,
       businesses!inner (
@@ -367,6 +369,8 @@ async function processAutoCancel(
       updates: { status: 'cancelled_no_response', cancelled_at: now.toISOString() },
     }).catch((err) => console.error('[sheets-update] failed:', err))
   }
+
+  void notifyMedusa(order.medusa_order_id, 'NO_RESPONSE', 'No WhatsApp response after reminder')
 
   // Send cancellation notification to customer (non-fatal if it fails)
   const sendResult = await sendCancellationTemplate({
