@@ -6,15 +6,15 @@ export async function notifyMedusa(
   if (!medusaOrderId) return
 
   const medusaUrl = process.env.MEDUSA_BACKEND_URL
-  const apiKey = process.env.MEDUSA_ADMIN_API_KEY
-  if (!medusaUrl || !apiKey) return
+  const webhookSecret = process.env.BAKERY_ORDERS_WEBHOOK_SECRET
+  if (!medusaUrl || !webhookSecret) return
 
-  await fetch(`${medusaUrl}/admin/operations/orders/${medusaOrderId}/status`, {
+  await fetch(`${medusaUrl}/webhooks/bakery-orders/status`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-medusa-access-token': apiKey,
+      'x-webhook-secret': webhookSecret,
     },
-    body: JSON.stringify({ status, notes }),
+    body: JSON.stringify({ order_id: medusaOrderId, status, notes }),
   }).catch((err) => console.error('[Medusa sync] failed:', err))
 }
