@@ -106,7 +106,7 @@ export function formatPricingBlock(params: {
   const { total, currency, subtotal, discount_total, discount_code } = params
 
   if (!discount_total || discount_total <= 0) {
-    return `💰 Total: ${formatCurrency(total, currency)}`
+    return formatCurrency(total, currency)
   }
 
   return [

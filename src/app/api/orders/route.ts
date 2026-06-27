@@ -146,6 +146,12 @@ export async function POST(request: Request) {
     (rawBody.medusa_order_id as string | undefined) ??
     null
   console.log('[orders] resolved medusa_order_id:', medusaOrderId)
+  console.log('[orders] pricing:', {
+    subtotal: data.subtotal,
+    discount_total: data.discount_total,
+    discount_code: data.discount_code,
+    total: data.total_amount,
+  })
   const supabase = createServiceRoleClient()
 
   try {
