@@ -91,6 +91,31 @@ export function formatPaymentMethod(method: 'cod' | 'paid'): string {
   return method === 'cod' ? 'Cash on Delivery' : 'Paid Online'
 }
 
+/**
+ * Builds the pricing block for {{4}} in the order confirmation template.
+ * Returns a single-line total when no discount applies, or a three-line
+ * block (subtotal / discount / total) when a discount is present.
+ */
+export function formatPricingBlock(params: {
+  total: number
+  currency: string
+  subtotal?: number
+  discount_total?: number
+  discount_code?: string | null
+}): string {
+  const { total, currency, subtotal, discount_total, discount_code } = params
+
+  if (!discount_total || discount_total <= 0) {
+    return `💰 Total: ${formatCurrency(total, currency)}`
+  }
+
+  return [
+    `💰 Subtotal: ${formatCurrency(subtotal ?? total, currency)}`,
+    `🎟️ Discount${discount_code ? ` (${discount_code})` : ''}: - ${formatCurrency(discount_total, currency)}`,
+    `✅ Total: ${formatCurrency(total, currency)}`,
+  ].join('\n')
+}
+
 // ============================================================
 // Main send function
 // ============================================================
@@ -135,7 +160,7 @@ export async function sendOrderConfirmationTemplate(
             { type: 'text', text: sanitizeForTemplate(template_variables.customer_name) },
             { type: 'text', text: sanitizeForTemplate(template_variables.order_id) },
             { type: 'text', text: sanitizeForTemplate(template_variables.items_text) },
-            { type: 'text', text: sanitizeForTemplate(template_variables.total_with_currency) },
+            { type: 'text', text: template_variables.total_with_currency },
             { type: 'text', text: sanitizeForTemplate(template_variables.payment_method) },
             { type: 'text', text: sanitizeForTemplate(template_variables.delivery_address) },
           ],

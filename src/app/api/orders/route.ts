@@ -4,6 +4,7 @@ import {
   formatItemsForMessage,
   formatCurrency,
   formatPaymentMethod,
+  formatPricingBlock,
 } from '@/lib/whatsapp/send-template'
 import { appendOrderToSheet } from '@/lib/google-sheets/log-order'
 
@@ -32,6 +33,9 @@ type CreateOrderBody = {
   payment_method: string
   delivery_address?: string
   medusa_order_id?: string
+  subtotal?: number
+  discount_total?: number
+  discount_code?: string | null
 }
 
 type ValidationResult =
@@ -223,7 +227,13 @@ export async function POST(request: Request) {
             customer_name: extractFirstName(data.customer_name),
             order_id: data.external_order_id,
             items_text: formatItemsForMessage(data.items),
-            total_with_currency: formatCurrency(data.total_amount, data.currency),
+            total_with_currency: formatPricingBlock({
+              total: data.total_amount,
+              currency: data.currency,
+              subtotal: data.subtotal,
+              discount_total: data.discount_total,
+              discount_code: data.discount_code,
+            }),
             payment_method: formatPaymentMethod(data.payment_method as 'cod' | 'paid'),
             delivery_address: data.delivery_address ?? 'Pickup',
           },
