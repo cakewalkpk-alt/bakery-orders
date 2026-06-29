@@ -87,8 +87,8 @@ export function formatCurrency(amount: number, currency: string): string {
 /**
  * Returns the human-readable label for a payment method code.
  */
-export function formatPaymentMethod(method: 'cod' | 'paid'): string {
-  return method === 'cod' ? 'Cash on Delivery' : 'Paid Online'
+export function formatPaymentMethod(method: string): string {
+  return `💳 Payment: ${method}`
 }
 
 /**

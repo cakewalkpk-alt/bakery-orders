@@ -68,8 +68,8 @@ function validate(body: unknown): ValidationResult {
     }
   }
 
-  if (!['cod', 'paid'].includes(b.payment_method as string)) {
-    return { valid: false, error: 'payment_method must be "cod" or "paid"' }
+  if (!b.payment_method || typeof b.payment_method !== 'string' || !b.payment_method.trim()) {
+    return { valid: false, error: 'payment_method must be a non-empty string' }
   }
 
   const phone = b.customer_phone as string
@@ -240,7 +240,7 @@ export async function POST(request: Request) {
               discount_total: data.discount_total,
               discount_code: data.discount_code,
             }),
-            payment_method: formatPaymentMethod(data.payment_method as 'cod' | 'paid'),
+            payment_method: formatPaymentMethod(data.payment_method),
             delivery_address: data.delivery_address ?? 'Pickup',
           },
           header_image_url: headerImageUrl,
