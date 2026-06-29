@@ -254,7 +254,7 @@ async function processReminder(
       order_id: order.external_order_id,
       items_text: formatItemsForMessage(order.items),
       total_with_currency: formatCurrency(order.total_amount, order.currency),
-      payment_method: formatPaymentMethod(order.payment_method as 'cod' | 'paid'),
+      payment_method: formatPaymentMethod(order.payment_method),
       delivery_address: order.delivery_address ?? 'Pickup',
     },
     header_image_url: headerImageUrl,
