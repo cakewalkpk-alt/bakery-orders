@@ -109,11 +109,8 @@ export function formatPricingBlock(params: {
     return formatCurrency(total, currency)
   }
 
-  return [
-    `💰 Subtotal: ${formatCurrency(subtotal ?? total, currency)}`,
-    `🎟️ Discount${discount_code ? ` (${discount_code})` : ''}: - ${formatCurrency(discount_total, currency)}`,
-    `✅ Total: ${formatCurrency(total, currency)}`,
-  ].join('\n')
+  const discountLabel = discount_code ? `${discount_code}: ` : ''
+  return `${formatCurrency(total, currency)} (${discountLabel}-${formatCurrency(discount_total, currency)})`
 }
 
 // ============================================================
